@@ -104,6 +104,7 @@
           <button class="btn sub small" id="btnRight">이동 ▶</button>
           <button class="btn sub small" id="btnDel">삭제</button>
         </div>
+        <label class="file" id="batchPhotoLabel" style="margin-top:8px;padding:11px">사진 여러 장 한번에 넣기 (슬라이드 순서대로)<input type="file" id="batchPhoto" accept="image/*" multiple></label>
       </div>
 
       <div class="card" style="margin-top:12px">
@@ -160,8 +161,8 @@
         <input type="text" id="title1" placeholder="첫 번째 줄">
         <label>제목 2행 <span style="font-weight:500">— [대괄호]로 감싸면 형광펜</span></label>
         <input type="text" id="title2" placeholder="[강조할 단어] 나머지 문장">
-        <label>소제목 (최대 2줄, 직접 줄바꿈)</label>
-        <textarea id="subhead" rows="2" placeholder="첫째 줄&#10;둘째 줄"></textarea>
+        <label>소제목 <span style="font-weight:500" id="subheadHint">(최대 2줄, 직접 줄바꿈)</span></label>
+        <textarea id="subhead" rows="4" placeholder="첫째 줄&#10;둘째 줄"></textarea>
       </div>
 
       <div class="card">

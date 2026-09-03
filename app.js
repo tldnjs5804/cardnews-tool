@@ -36,7 +36,10 @@ var TEMPLATES = [
   {id:'quote',    name:'인용'},
   {id:'solid',    name:'단색', text:true},
   {id:'gradient', name:'그라디언트', text:true},
-  {id:'stat',     name:'숫자강조', text:true}
+  {id:'stat',     name:'숫자강조', text:true},
+  {id:'checklist',name:'체크리스트', text:true},
+  {id:'ranking',  name:'TOP 리스트', text:true},
+  {id:'timeline', name:'타임라인', text:true}
 ];
 function isTextTpl(id){
   for(var i=0;i<TEMPLATES.length;i++) if(TEMPLATES[i].id === id) return !!TEMPLATES[i].text;
@@ -706,8 +709,76 @@ function tplStat(g, W, H, k){
   authorLine(g, W/2, H - 92*k, k, 'rgba(255,255,255,0.66)', 'center');
 }
 
+// 순수 텍스트 폭이 아니라 리스트 한 줄 전체가 들어가야 하므로 fitSize(세그먼트용)와 별개로 둔다
+function fitPlainSize(g, text, weight, size, maxW){
+  var s = size;
+  while(s > 14){
+    g.font = font(weight, s);
+    if(g.measureText(text).width <= maxW) break;
+    s -= 2;
+  }
+  g.font = font(weight, s);
+  return s;
+}
+// 체크리스트 / TOP 리스트 / 타임라인 — 소제목의 각 줄이 하나의 항목이 된다 (최대 5개)
+function tplItemList(g, W, H, k, mode){
+  TEXT_SHADOW = false;
+  var acc = curAccent();
+  var bg = '#14161c';
+  g.fillStyle = bg; g.fillRect(0,0,W,H);
+  var rg = g.createRadialGradient(W*0.5, H*0.1, 0, W*0.5, H*0.1, W*0.95);
+  rg.addColorStop(0, mix(acc.c, bg, 0.86));
+  rg.addColorStop(1, bg);
+  g.fillStyle = rg; g.fillRect(0,0,W,H);
+
+  topRow(g, W, k, '#fff', 'left', {dim:'rgba(255,255,255,0.6)'});
+
+  var pad = 78*k, maxW = W - pad*2;
+  var t1 = segs(S.title1), t2 = segs(S.title2);
+  var y = 220*k + ty(k);
+  if(t1.length){ var s1 = fitSize(g, t1, 800, S.ts*k*0.86, maxW); drawSegs(g, t1, pad, y, s1, acc.c, acc.on, '#fff', 'left'); y += s1*1.22; }
+  if(t2.length){ var s2 = fitSize(g, t2, 800, S.ts*k*0.86, maxW); drawSegs(g, t2, pad, y, s2, acc.c, acc.on, '#fff', 'left'); y += s2*1.22; }
+
+  var items = lines(S.subhead, 5);
+  if(!items.length) return;
+  var zoneTop = y + 36*k, zoneBottom = H - 140*k;
+  var rowH = Math.max(70*k, Math.min(130*k, (zoneBottom - zoneTop) / items.length));
+  var listH = rowH * items.length;
+  var listStart = zoneTop + Math.max(0, (zoneBottom - zoneTop - listH) / 2);
+
+  var baseSz = Math.min(S.ss*k*1.05, rowH*0.4);
+  var isz = baseSz, textMaxW = maxW - 82*k;
+  items.forEach(function(t){ isz = Math.min(isz, fitPlainSize(g, t, 600, baseSz, textMaxW)); });
+
+  for(var i=0;i<items.length;i++){
+    var cy = listStart + rowH*i + rowH/2;
+    if(mode === 'timeline' && i < items.length-1){
+      g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 3*k;
+      g.beginPath(); g.moveTo(pad+26*k, cy+26*k); g.lineTo(pad+26*k, cy+rowH-26*k); g.stroke();
+    }
+    g.fillStyle = acc.c; g.textAlign = 'center'; g.textBaseline = 'middle';
+    if(mode === 'check'){
+      rr(g, pad, cy-26*k, 52*k, 52*k, 14*k); g.fill();
+      g.fillStyle = acc.on; g.font = font(800, 28*k);
+      g.fillText('✓', pad+26*k, cy+1*k);
+    }else{
+      g.beginPath(); g.arc(pad+26*k, cy, 26*k, 0, Math.PI*2); g.fill();
+      g.fillStyle = acc.on; g.font = font(800, 26*k);
+      g.fillText(String(i+1), pad+26*k, cy+1*k);
+    }
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = '#fff'; g.font = font(600, isz);
+    g.fillText(items[i], pad+82*k, cy + isz*0.34);
+  }
+  authorLine(g, pad, H-72*k, k, 'rgba(255,255,255,0.55)');
+}
+function tplChecklist(g, W, H, k){ tplItemList(g, W, H, k, 'check'); }
+function tplRanking(g, W, H, k){ tplItemList(g, W, H, k, 'rank'); }
+function tplTimeline(g, W, H, k){ tplItemList(g, W, H, k, 'timeline'); }
+
 var DRAW = {classic:tplClassic, center:tplCenter, band:tplBand, minimal:tplMinimal, magazine:tplMagazine, quote:tplQuote,
-            solid:tplSolid, gradient:tplGradient, stat:tplStat};
+            solid:tplSolid, gradient:tplGradient, stat:tplStat,
+            checklist:tplChecklist, ranking:tplRanking, timeline:tplTimeline};
 
 /* ---------- 렌더 ----------
    메인 캔버스뿐 아니라 슬라이드 스트립 썸네일, 일괄 저장용 오프스크린 캔버스도
@@ -802,6 +873,19 @@ function addSlide(){
   schedule();
   persistSoon();
 }
+// 여러 장을 한 번에 골라 순서대로 슬라이드에 넣는다 (슬라이드가 모자라면 자동으로 늘린다) —
+// 한 장씩 "사진 선택하기"를 반복하지 않아도 되는 게 핵심
+function loadPhotosBatch(fileList){
+  var files = Array.prototype.slice.call(fileList || []);
+  if(!files.length) return;
+  while(slides.length < files.length) slides.push(newSlide());
+  files.forEach(function(f, i){ loadPhotoFile(f, slides[i]); });
+  activeIdx = 0;
+  syncActiveFieldsToUI();
+  buildStrip();
+  schedule();
+  persistSoon();
+}
 function duplicateActive(){
   var s = slides[activeIdx];
   var copy = {
@@ -874,6 +958,24 @@ var PRESETS = [
     slides:[
       {title1:'생각을 바꾸면', title2:'[삶이] 달라집니다', subhead:'작은 습관 하나가 만드는 큰 변화'},
       {title1:'매일 5분', title2:'[명상이] 주는 변화', subhead:'바쁜 일상 속 나를 위한 시간'}
+    ]},
+  {id:'checklist', label:'이사 체크리스트', tpl:'checklist', accent:8, font:0,
+    common:{category:'Life', subtitle:'', tag:'Checklist', author:''},
+    slides:[
+      {title1:'이사 전에', title2:'[꼭] 확인하세요', subhead:'전입신고 미리 준비\n관리비 정산 확인\n인터넷 이전 신청\n엘리베이터 예약\n주소 변경 알림'},
+      {title1:'이사 당일', title2:'[놓치기 쉬운] 것들', subhead:'귀중품 따로 챙기기\n계량기 사진 찍기\n새 집 청소 먼저\n택배 주소 변경\n이웃에게 인사'}
+    ]},
+  {id:'ranking', label:'TOP 리스트', tpl:'ranking', accent:7, font:0,
+    common:{category:'Pick', subtitle:'', tag:'Ranking', author:''},
+    slides:[
+      {title1:'요즘 뜨는', title2:'[카페] TOP 3', subhead:'성수동 브루잉 랩\n연남동 커피 리브레\n한남동 프릳츠'},
+      {title1:'다음 달엔', title2:'[여기] 가보세요', subhead:'을지로 골목 카페\n망원동 로스터리\n합정 루프탑'}
+    ]},
+  {id:'timeline', label:'3단계 루틴', tpl:'timeline', accent:9, font:0,
+    common:{category:'Routine', subtitle:'', tag:'', author:''},
+    slides:[
+      {title1:'아침을 바꾸는', title2:'[3단계] 루틴', subhead:'기상 후 물 한 잔\n5분 스트레칭\n오늘 할 일 3가지 적기'},
+      {title1:'잠들기 전', title2:'[숙면] 루틴', subhead:'전자기기 끄기\n가벼운 독서\n내일 옷 미리 정하기'}
     ]}
 ];
 function hasAnyContent(){
@@ -911,7 +1013,7 @@ function parseBulk(text){
       sl.title2 = ls[idx].replace(/^>\s*/, '').trim();
       idx++;
     }
-    sl.subhead = ls.slice(idx, idx + 2).join('\n');
+    sl.subhead = ls.slice(idx, idx + 5).join('\n');
     out.push(sl);
   });
   return out;
@@ -1155,12 +1257,16 @@ function setRangeUI(id, valId, val){
   document.getElementById(id).value = val;
   document.getElementById(valId).textContent = val;
 }
+var LIST_TPLS = {checklist:1, ranking:1, timeline:1};
 function syncPhotoCard(){
   var textOnly = isTextTpl(STYLE.tpl);
   document.getElementById('photoCard').style.display = textOnly ? 'none' : '';
   document.getElementById('titleHint').textContent = (STYLE.tpl === 'stat')
     ? '숫자가 들어갑니다 (예: 92%)'
     : '';
+  document.getElementById('subheadHint').textContent = LIST_TPLS[STYLE.tpl]
+    ? '— 한 줄에 항목 하나씩, 최대 5개'
+    : '(최대 2줄, 직접 줄바꿈)';
 }
 function syncActiveFieldsToUI(){
   var s = slides[activeIdx];
@@ -1320,6 +1426,10 @@ function initUI(){
   document.getElementById('file').addEventListener('change', function(e){
     var f = e.target.files && e.target.files[0];
     if(f) loadPhotoFile(f, slides[activeIdx]);
+  });
+  document.getElementById('batchPhoto').addEventListener('change', function(e){
+    loadPhotosBatch(e.target.files);
+    e.target.value = ''; // 같은 파일들을 다시 골라도 change가 또 발생하도록 비워둔다
   });
   document.getElementById('logoFile').addEventListener('change', function(e){
     var f = e.target.files && e.target.files[0];
