@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>카드뉴스 생성기</title>
+<style>
+  :root{
+    --bg:#0e0f12; --panel:#17181d; --panel2:#1e2027; --line:#2b2e37;
+    --tx:#eceef2; --tx2:#9aa0ad; --acc:#4f7cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif;
+    -webkit-text-size-adjust:100%}
+  .wrap{max-width:1160px;margin:0 auto;padding:16px 14px 60px}
+  h1{font-size:17px;margin:6px 0 14px;font-weight:800;letter-spacing:-.02em}
+  h1 span{color:var(--tx2);font-weight:500;font-size:12px;margin-left:6px}
+  .layout{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+  .previewCol{flex:1 1 340px;min-width:280px;position:sticky;top:12px}
+  .ctrlCol{flex:1 1 420px;min-width:280px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px}
+  canvas#cv{display:block;width:100%;height:auto;border-radius:10px;background:#000}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+  .card h2{font-size:12px;letter-spacing:.04em;color:var(--tx2);margin:0 0 10px;font-weight:700;text-transform:uppercase}
+  label{display:block;font-size:12px;color:var(--tx2);margin:10px 0 5px;font-weight:600}
+  label:first-of-type{margin-top:0}
+  input[type=text],textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--tx);
+    border-radius:10px;padding:10px 11px;font-size:14px;font-family:inherit;outline:none}
+  input[type=text]:focus,textarea:focus{border-color:var(--acc)}
+  textarea{resize:vertical;min-height:62px;line-height:1.45}
+  input[type=range]{width:100%;accent-color:var(--acc);margin:2px 0}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1;min-width:0}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .opt{background:var(--panel2);border:1px solid var(--line);color:var(--tx2);border-radius:10px;
+    padding:9px 6px;font-size:12px;font-weight:700;cursor:pointer;text-align:center;font-family:inherit}
+  .opt.on{background:var(--acc);border-color:var(--acc);color:#fff}
+  .swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:2px}
+  .sw{width:38px;height:38px;border-radius:50%;border:2px solid transparent;cursor:pointer;
+    box-shadow:0 0 0 1px var(--line) inset}
+  .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--acc)}
+  .file{display:block;width:100%;background:var(--panel2);border:1px dashed var(--line);border-radius:10px;
+    padding:16px;text-align:center;color:var(--tx2);font-size:13px;font-weight:600;cursor:pointer}
+  .file input{display:none}
+  .btn{width:100%;border:0;border-radius:12px;padding:15px;font-size:15px;font-weight:800;
+    background:var(--acc);color:#fff;cursor:pointer;font-family:inherit}
+  .btn.sub{background:var(--panel2);color:var(--tx);border:1px solid var(--line);font-size:13px;padding:12px;margin-top:8px}
+  .hint{font-size:11px;color:var(--tx2);line-height:1.5;margin-top:8px}
+  .val{float:right;color:var(--tx);font-weight:700}
+  #saveOverlay{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:99;display:none;
+    flex-direction:column;align-items:center;justify-content:center;padding:16px;gap:14px}
+  #saveOverlay img{max-width:100%;max-height:78vh;border-radius:8px}
+  #saveOverlay p{margin:0;font-size:14px;font-weight:700;text-align:center;line-height:1.6}
+  #saveOverlay small{color:var(--tx2);font-weight:500}
+  #saveOverlay button{background:#fff;color:#111;border:0;border-radius:10px;padding:11px 22px;font-weight:800;font-size:14px}
+  @media(max-width:800px){ .previewCol{position:static} }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>카드뉴스 생성기<span>1080×1350 · 브라우저에서만 처리</span></h1>
+  <div class="layout">
+
+    <div class="previewCol">
+      <div class="stage">
+        <canvas id="cv" width="1080" height="1350"></canvas>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <button class="btn" id="btnSave">이미지 저장 / 공유</button>
+        <button class="btn sub" id="btnLong">저장이 안 되면 · 길게 눌러 저장</button>
+        <div class="hint">아이폰에서는 공유 시트의 <b>"이미지 저장"</b>을 누르면 사진첩에 들어갑니다.</div>
+      </div>
+    </div>
+
+    <div class="ctrlCol">
+      <div class="card">
+        <h2>템플릿</h2>
+        <div class="grid3" id="tpl"></div>
+        <label style="margin-top:12px">비율</label>
+        <div class="grid2" id="ratio"></div>
+      </div>
+
+      <div class="card" id="photoCard">
+        <h2>사진</h2>
+        <label class="file" id="fileLabel">사진 선택하기<input type="file" id="file" accept="image/*"></label>
+        <label>사진 위치 (상하)<span class="val" id="vFocus">50</span></label>
+        <input type="range" id="focus" min="0" max="100" value="50">
+        <label>어둡게<span class="val" id="vDim">100</span></label>
+        <input type="range" id="dim" min="0" max="160" value="100">
+      </div>
+
+      <div class="card">
+        <h2>텍스트</h2>
+        <div class="row">
+          <div><label>카테고리</label><input type="text" id="category" placeholder="Coffee"></div>
+          <div><label>부제</label><input type="text" id="subtitle" placeholder="월간커피"></div>
+        </div>
+        <label>우측 태그</label><input type="text" id="tag" placeholder="Article">
+        <label>제목 1행 <span style="font-weight:500" id="titleHint"></span></label>
+        <input type="text" id="title1" placeholder="첫 번째 줄">
+        <label>제목 2행 <span style="font-weight:500">— [대괄호]로 감싸면 형광펜</span></label>
+        <input type="text" id="title2" placeholder="[강조할 단어] 나머지 문장">
+        <label>소제목 (최대 2줄, 직접 줄바꿈)</label>
+        <textarea id="subhead" rows="2" placeholder="첫째 줄&#10;둘째 줄"></textarea>
+        <label>작성자</label><input type="text" id="author" placeholder="홍길동">
+      </div>
+
+      <div class="card">
+        <h2>스타일</h2>
+        <label>글씨체 <span style="font-weight:500">— 기기에 없는 글씨체는 고딕으로 나옵니다</span></label>
+        <div class="grid4" id="fontOpts"></div>
+        <label style="margin-top:14px">강조 색상</label>
+        <div class="swatches" id="acc"></div>
+        <label style="margin-top:14px">제목 크기<span class="val" id="vTs">76</span></label>
+        <input type="range" id="ts" min="40" max="140" value="76">
+        <label>소제목 크기<span class="val" id="vSs">32</span></label>
+        <input type="range" id="ss" min="18" max="60" value="32">
+        <label>글자 위치 (위 ↔ 아래)<span class="val" id="vTy">0</span></label>
+        <input type="range" id="ty" min="-140" max="140" value="0">
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="saveOverlay">
+  <p>이미지를 <b>길게 눌러</b> "사진에 저장"<br><small>어떤 브라우저에서도 이 방법은 항상 됩니다</small></p>
+  <img id="ovImg" alt="">
+  <button id="ovClose">닫기</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
