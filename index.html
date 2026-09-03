@@ -75,6 +75,13 @@
     aspect-ratio:4/5}
   .slideBtns{display:flex;gap:8px;margin-top:6px}
   .slideBtns button{flex:1}
+  details.adv{margin-top:14px}
+  details.adv summary{font-size:12px;color:var(--tx2);font-weight:700;cursor:pointer;list-style:none;
+    display:flex;align-items:center;gap:6px}
+  details.adv summary::-webkit-details-marker{display:none}
+  details.adv summary:before{content:'▸';display:inline-block;transition:transform .15s}
+  details.adv[open] summary:before{transform:rotate(90deg)}
+  details.adv > label:first-of-type{margin-top:12px}
   @media(max-width:800px){ .previewCol{position:static} }
 </style>
 </head>
@@ -109,7 +116,13 @@
 
     <div class="ctrlCol">
       <div class="card">
-        <h2>빠른 생성 <small>— 여러 슬라이드를 한 번에</small></h2>
+        <h2>예시로 시작 <small>— 버튼 하나로 완성된 카드뉴스</small></h2>
+        <div class="grid3" id="presets"></div>
+        <div class="hint">템플릿·색·문구가 채워진 2장짜리 예시가 바로 열려요. 사진·글자만 내 것으로 바꾸면 끝.</div>
+      </div>
+
+      <div class="card">
+        <h2>빠른 생성 <small>— 텍스트만 붙여넣어 여러 슬라이드 한 번에</small></h2>
         <textarea id="bulk" placeholder="첫 줄: 제목 1행 ([강조]는 형광펜)
 > 로 시작하면: 제목 2행
 그 다음 줄들: 소제목 (최대 2줄)
@@ -152,6 +165,18 @@
       </div>
 
       <div class="card">
+        <h2>로고 / 워터마크 <small>— 모든 슬라이드에 동일 적용</small></h2>
+        <label class="file" id="logoFileLabel">로고 이미지 선택하기<input type="file" id="logoFile" accept="image/*"></label>
+        <label>위치</label>
+        <div class="grid2" id="logoPos"></div>
+        <label style="margin-top:12px">크기<span class="val" id="vLogoScale">18</span></label>
+        <input type="range" id="logoScale" min="6" max="40" value="18">
+        <label>투명도<span class="val" id="vLogoOpacity">85</span></label>
+        <input type="range" id="logoOpacity" min="20" max="100" value="85">
+        <button class="btn sub small" id="btnLogoRemove" style="margin-top:10px">로고 제거</button>
+      </div>
+
+      <div class="card">
         <h2>공통 정보 <small>— 모든 슬라이드에 동일 적용</small></h2>
         <div class="row">
           <div><label>카테고리</label><input type="text" id="category" placeholder="Coffee"></div>
@@ -169,14 +194,17 @@
         <div class="swatches" id="acc">
           <input type="color" class="swCustom" id="accCustom" value="#4f7cff" title="커스텀 색상">
         </div>
-        <label style="margin-top:14px">제목 크기<span class="val" id="vTs">76</span></label>
-        <input type="range" id="ts" min="40" max="140" value="76">
-        <label>소제목 크기<span class="val" id="vSs">32</span></label>
-        <input type="range" id="ss" min="18" max="60" value="32">
-        <label>글자 위치 (위 ↔ 아래)<span class="val" id="vTy">0</span></label>
-        <input type="range" id="ty" min="-140" max="140" value="0">
         <label style="margin-top:14px">저장 형식</label>
         <div class="grid2" id="fmt"></div>
+        <details class="adv">
+          <summary>세부 조정 (글자 크기·위치)</summary>
+          <label>제목 크기<span class="val" id="vTs">76</span></label>
+          <input type="range" id="ts" min="40" max="140" value="76">
+          <label>소제목 크기<span class="val" id="vSs">32</span></label>
+          <input type="range" id="ss" min="18" max="60" value="32">
+          <label>글자 위치 (위 ↔ 아래)<span class="val" id="vTy">0</span></label>
+          <input type="range" id="ty" min="-140" max="140" value="0">
+        </details>
       </div>
     </div>
 

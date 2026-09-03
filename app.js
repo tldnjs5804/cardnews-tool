@@ -52,7 +52,8 @@ var RATIOS = [{id:'feed',name:'피드 4:5',w:1080,h:1350},{id:'story',name:'스�
 */
 var STYLE = {
   tpl:'classic', ratio:'feed', accent:0, accentCustom:null, font:0,
-  ts:76, ss:32, ty:0, format:'png'
+  ts:76, ss:32, ty:0, format:'png',
+  logo:null, logoPos:'br', logoScale:18, logoOpacity:85
 };
 var COMMON = { category:'', subtitle:'', tag:'', author:'' };
 var S = {};
@@ -123,6 +124,73 @@ function decodePhotoToCache(slide){
     im.onerror = function(){ res(); };
     im.src = slide.photo;
   });
+}
+
+/* ---------- 로고 / 워터마크 (모든 슬라이드 공통) ---------- */
+var logoCanvas = null;
+function loadLogoFile(f){
+  if(!f) return;
+  var fr = new FileReader();
+  fr.onload = function(){
+    var im = new Image();
+    im.onload = function(){
+      var MAX = 500; // 로고는 작게만 그려지므로 원본을 그대로 들고 있을 필요가 없다
+      var r = Math.min(1, MAX/Math.max(im.width, im.height));
+      var w = Math.max(1, Math.round(im.width*r)), h = Math.max(1, Math.round(im.height*r));
+      var c = document.createElement('canvas'); c.width = w; c.height = h;
+      var g = c.getContext('2d');
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(im, 0, 0, w, h);
+      STYLE.logo = c.toDataURL('image/png'); // 투명 배경을 유지해야 하므로 PNG로 저장
+      logoCanvas = c;
+      syncLogoUI();
+      scheduleAll();
+      persistSoon();
+    };
+    im.onerror = function(){ alert('로고 이미지를 불러오지 못했습니다.'); };
+    im.src = fr.result;
+  };
+  fr.onerror = function(){ alert('로고 파일을 읽지 못했습니다.'); };
+  fr.readAsDataURL(f);
+}
+function decodeLogoToCache(){
+  return new Promise(function(res){
+    if(!STYLE.logo){ res(); return; }
+    var im = new Image();
+    im.onload = function(){
+      var c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+      c.getContext('2d').drawImage(im, 0, 0);
+      logoCanvas = c;
+      res();
+    };
+    im.onerror = function(){ res(); };
+    im.src = STYLE.logo;
+  });
+}
+function removeLogo(){
+  STYLE.logo = null; logoCanvas = null;
+  syncLogoUI();
+  scheduleAll();
+  persistSoon();
+}
+// 어떤 템플릿이든 상관없이 다 그린 뒤 맨 위에 얹는다 — 배경마다 대비 로직을 따로 짤 필요가 없다
+function drawLogoWatermark(g, W, H, k){
+  if(!logoCanvas) return;
+  var targetW = W * (STYLE.logoScale/100);
+  var scale = targetW / logoCanvas.width;
+  var dw = logoCanvas.width * scale, dh = logoCanvas.height * scale;
+  var margin = 56*k, x, y;
+  switch(STYLE.logoPos){
+    case 'tl': x = margin; y = margin; break;
+    case 'tr': x = W - margin - dw; y = margin; break;
+    case 'bl': x = margin; y = H - margin - dh; break;
+    default:   x = W - margin - dw; y = H - margin - dh; break; // 'br'
+  }
+  g.save();
+  g.globalAlpha = STYLE.logoOpacity/100;
+  g.shadowColor = 'rgba(0,0,0,0.35)'; g.shadowBlur = 10*k; g.shadowOffsetY = 1*k;
+  g.drawImage(logoCanvas, x, y, dw, dh);
+  g.restore();
 }
 
 /* ---------- 그리기 유틸 ---------- */
@@ -664,6 +732,7 @@ function renderInto(g, cvEl, slide, W, H){
   TEXT_SHADOW = true; // 사진 템플릿 기본값. 텍스트 템플릿이 각자 끈다
   applySlideToS(slide);
   (DRAW[S.tpl] || tplClassic)(g, W, H, k);
+  drawLogoWatermark(g, W, H, k);
 }
 
 var rafId = 0;
@@ -762,6 +831,64 @@ function moveActive(dir){
   if(j < 0 || j >= slides.length) return;
   var tmp = slides[activeIdx]; slides[activeIdx] = slides[j]; slides[j] = tmp;
   activeIdx = j;
+  buildStrip();
+  schedule();
+  persistSoon();
+}
+
+/* ---------- 예시로 시작: 완성된 스타일+문구 프리셋 ---------- */
+// 사진 없이도(placeholder 배경) 바로 완성도 있게 보이도록 사진 템플릿과 텍스트 전용 템플릿을 섞어뒀다
+var PRESETS = [
+  {id:'cafe', label:'카페 무드', tpl:'classic', accent:6, font:0,
+    common:{category:'Coffee', subtitle:'월간커피', tag:'Article', author:'편집팀'},
+    slides:[
+      {title1:'오늘의 원두는', title2:'[에티오피아] 예가체프', subhead:'산미와 플로럴 향이 매력적인\n싱글오리진 원두를 소개합니다'},
+      {title1:'브루잉 가이드', title2:'[물 온도] 92도가 포인트', subhead:'쓴맛은 줄이고 단맛은 살리는\n핸드드립 온도 공식'}
+    ]},
+  {id:'stat', label:'인사이트 통계', tpl:'stat', accent:9, font:0,
+    common:{category:'Report', subtitle:'2026 Q3', tag:'Data', author:''},
+    slides:[
+      {title1:'73%', title2:'재구매 의사 있음', subhead:'이번 분기 고객 만족도 조사 결과'},
+      {title1:'4.6', title2:'평균 별점 (5점 만점)', subhead:'응답자 1,204명 기준'}
+    ]},
+  {id:'quote', label:'감성 인용구', tpl:'quote', accent:4, font:1,
+    common:{category:'', subtitle:'', tag:'Quote', author:''},
+    slides:[
+      {title1:'오늘도', title2:'[충분히] 잘 해내고 있어요', subhead:'지친 하루의 끝에 건네는\n작은 위로'},
+      {title1:'완벽하지 않아도', title2:'[괜찮아요]', subhead:'모두가 각자의 속도로 걷고 있으니까'}
+    ]},
+  {id:'brand', label:'브랜드 소개', tpl:'solid', accent:3, font:0,
+    common:{category:'Brand', subtitle:'2026', tag:'', author:''},
+    slides:[
+      {title1:'새로운 시작', title2:'[지속가능한] 라이프스타일', subhead:'우리가 만드는 변화, 함께해요'},
+      {title1:'우리의 약속', title2:'[100%] 재생 소재 사용', subhead:'포장부터 배송까지, 환경을 생각합니다'}
+    ]},
+  {id:'magazine', label:'매거진 커버', tpl:'magazine', accent:1, font:0,
+    common:{category:'Feature', subtitle:'', tag:'Cover', author:''},
+    slides:[
+      {title1:'이번 호 특집', title2:'[디지털 노마드]로 살기', subhead:'어디서나 일할 수 있는 시대,\n진짜 자유란 무엇일까'},
+      {title1:'오늘의 인터뷰', title2:'[퇴사 후] 1년, 그들의 이야기', subhead:'안정보다 자유를 택한 사람들'}
+    ]},
+  {id:'gradient', label:'그라디언트 카드', tpl:'gradient', accent:10, font:0,
+    common:{category:'', subtitle:'', tag:'', author:''},
+    slides:[
+      {title1:'생각을 바꾸면', title2:'[삶이] 달라집니다', subhead:'작은 습관 하나가 만드는 큰 변화'},
+      {title1:'매일 5분', title2:'[명상이] 주는 변화', subhead:'바쁜 일상 속 나를 위한 시간'}
+    ]}
+];
+function hasAnyContent(){
+  return slides.some(function(s){ return s.title1 || s.title2 || s.subhead || s.photo; }) ||
+         !!(COMMON.category || COMMON.subtitle || COMMON.tag || COMMON.author);
+}
+function applyPreset(p){
+  if(hasAnyContent() && !confirm('예시 "' + p.label + '"로 지금 내용을 바꿀까요? (사진은 유지되지 않아요)')) return;
+  STYLE.tpl = p.tpl; STYLE.accent = p.accent; STYLE.accentCustom = null; STYLE.font = p.font;
+  Object.assign(COMMON, p.common);
+  slides = p.slides.map(function(s){ return Object.assign(newSlide(), s); });
+  activeIdx = 0;
+  buildTplOpts(); buildFontOpts(); refreshAccentUI();
+  ['category','subtitle','tag','author'].forEach(function(k){ document.getElementById(k).value = COMMON[k]; });
+  syncActiveFieldsToUI();
   buildStrip();
   schedule();
   persistSoon();
@@ -1000,7 +1127,8 @@ function persistNow(){
   var snapshot = {
     common: COMMON,
     style: {tpl:STYLE.tpl, ratio:STYLE.ratio, accent:STYLE.accent, accentCustom:STYLE.accentCustom,
-      font:STYLE.font, ts:STYLE.ts, ss:STYLE.ss, ty:STYLE.ty, format:STYLE.format},
+      font:STYLE.font, ts:STYLE.ts, ss:STYLE.ss, ty:STYLE.ty, format:STYLE.format,
+      logo:STYLE.logo, logoPos:STYLE.logoPos, logoScale:STYLE.logoScale, logoOpacity:STYLE.logoOpacity},
     activeIdx: activeIdx,
     slides: slides.map(function(s){
       return {id:s.id, title1:s.title1, title2:s.title2, subhead:s.subhead, photo:s.photo,
@@ -1018,7 +1146,7 @@ function restoreDraft(){
       slides = saved.slides.map(function(s){ return Object.assign(newSlide(), s); });
       activeIdx = Math.max(0, Math.min(slides.length - 1, saved.activeIdx || 0));
     }
-    return Promise.all(slides.map(decodePhotoToCache));
+    return Promise.all(slides.map(decodePhotoToCache).concat([decodeLogoToCache()]));
   });
 }
 
@@ -1129,17 +1257,47 @@ function buildAccentSwatches(){
   });
   refreshAccentUI();
 }
-
-function initUI(){
-  buildOpts('tpl', TEMPLATES, 'tpl', function(){ syncPhotoCard(); });
-  buildOpts('ratio', RATIOS.map(function(r){ return {id:r.id, name:r.name}; }), 'ratio');
+// 프리셋 적용 후에도 버튼의 'on' 표시를 다시 맞춰야 하므로 이름 있는 함수로 분리해둔다
+function buildTplOpts(){ buildOpts('tpl', TEMPLATES, 'tpl', function(){ syncPhotoCard(); }); }
+function buildRatioOpts(){ buildOpts('ratio', RATIOS.map(function(r){ return {id:r.id, name:r.name}; }), 'ratio'); }
+function buildFontOpts(){
   buildOpts('fontOpts', FONTS.map(function(f, i){ return {id:i, name:f.name}; }), 'font');
   // 버튼 글씨도 실제 글꼴로 보여줘야 고르기 쉽다
   Array.prototype.forEach.call(document.getElementById('fontOpts').children, function(b, i){
     b.style.fontFamily = FONTS[i].f;
   });
+}
+function buildFmtOpts(){ buildOpts('fmt', [{id:'png', name:'PNG'}, {id:'jpeg', name:'JPEG'}], 'format'); }
+function buildLogoPosOpts(){
+  buildOpts('logoPos', [
+    {id:'tl', name:'좌상단'}, {id:'tr', name:'우상단'},
+    {id:'bl', name:'좌하단'}, {id:'br', name:'우하단'}
+  ], 'logoPos');
+}
+function buildPresetChips(){
+  var host = document.getElementById('presets');
+  host.innerHTML = '';
+  PRESETS.forEach(function(p){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'opt';
+    b.textContent = p.label;
+    b.addEventListener('click', function(){ applyPreset(p); });
+    host.appendChild(b);
+  });
+}
+function syncLogoUI(){
+  var label = document.getElementById('logoFileLabel');
+  if(label.firstChild) label.firstChild.nodeValue = STYLE.logo ? '로고 변경하기' : '로고 이미지 선택하기';
+}
+
+function initUI(){
+  buildTplOpts();
+  buildRatioOpts();
+  buildFontOpts();
   buildAccentSwatches();
-  buildOpts('fmt', [{id:'png', name:'PNG'}, {id:'jpeg', name:'JPEG'}], 'format');
+  buildFmtOpts();
+  buildLogoPosOpts();
+  buildPresetChips();
 
   bindCommonText('category', 'category');
   bindCommonText('subtitle', 'subtitle');
@@ -1156,11 +1314,18 @@ function initUI(){
   bindStyleRange('ts', 'ts', 'vTs');
   bindStyleRange('ss', 'ss', 'vSs');
   bindStyleRange('ty', 'ty', 'vTy');
+  bindStyleRange('logoScale', 'logoScale', 'vLogoScale');
+  bindStyleRange('logoOpacity', 'logoOpacity', 'vLogoOpacity');
 
   document.getElementById('file').addEventListener('change', function(e){
     var f = e.target.files && e.target.files[0];
     if(f) loadPhotoFile(f, slides[activeIdx]);
   });
+  document.getElementById('logoFile').addEventListener('change', function(e){
+    var f = e.target.files && e.target.files[0];
+    if(f) loadLogoFile(f);
+  });
+  document.getElementById('btnLogoRemove').addEventListener('click', removeLogo);
   document.getElementById('btnSave').addEventListener('click', save);
   document.getElementById('btnSaveAll').addEventListener('click', saveAll);
   document.getElementById('btnLong').addEventListener('click', showLongPress);
@@ -1209,11 +1374,20 @@ function initUI(){
   syncActiveFieldsToUI();
   buildStrip();
   syncPhotoCard();
+  syncLogoUI();
   render();
 }
 
 /* ---------- 초기 실행 ----------
    원본에는 블로그방 공유용 비밀번호 게이트가 있었지만,
    이 디벨롭 버전은 그 잠금을 제거하고 바로 사용 가능하게 열어둔다. */
+// 디바운스 중 탭을 닫거나 앱을 백그라운드로 보내면 마지막 편집(최대 500ms치)이 씹힐 수 있어
+// 숨겨지는 시점에 곧바로 저장을 시작한다 (완료 보장은 못 하지만 지연을 없애준다)
+function flushPersist(){ clearTimeout(persistTimer); persistNow(); }
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'hidden') flushPersist();
+});
+window.addEventListener('pagehide', flushPersist);
+
 restoreDraft().catch(function(){}).then(initUI);
 })();
