@@ -23,12 +23,14 @@
   canvas#cv{display:block;width:100%;height:auto;border-radius:10px;background:#000}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
   .card h2{font-size:12px;letter-spacing:.04em;color:var(--tx2);margin:0 0 10px;font-weight:700;text-transform:uppercase}
+  .card h2 small{text-transform:none;letter-spacing:0;font-weight:500;color:var(--tx2);opacity:.8}
   label{display:block;font-size:12px;color:var(--tx2);margin:10px 0 5px;font-weight:600}
   label:first-of-type{margin-top:0}
   input[type=text],textarea{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--tx);
     border-radius:10px;padding:10px 11px;font-size:14px;font-family:inherit;outline:none}
   input[type=text]:focus,textarea:focus{border-color:var(--acc)}
   textarea{resize:vertical;min-height:62px;line-height:1.45}
+  textarea#bulk{min-height:150px;font-size:13px;line-height:1.6}
   input[type=range]{width:100%;accent-color:var(--acc);margin:2px 0}
   .row{display:flex;gap:10px}
   .row>div{flex:1;min-width:0}
@@ -38,16 +40,18 @@
   .opt{background:var(--panel2);border:1px solid var(--line);color:var(--tx2);border-radius:10px;
     padding:9px 6px;font-size:12px;font-weight:700;cursor:pointer;text-align:center;font-family:inherit}
   .opt.on{background:var(--acc);border-color:var(--acc);color:#fff}
-  .swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:2px}
+  .swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:2px;align-items:center}
   .sw{width:38px;height:38px;border-radius:50%;border:2px solid transparent;cursor:pointer;
-    box-shadow:0 0 0 1px var(--line) inset}
+    box-shadow:0 0 0 1px var(--line) inset;padding:0}
   .sw.on{border-color:#fff;box-shadow:0 0 0 2px var(--acc)}
+  .swCustom{width:38px;height:38px;border-radius:50%;border:0;padding:0;cursor:pointer;background:conic-gradient(red,orange,yellow,lime,cyan,blue,violet,red)}
   .file{display:block;width:100%;background:var(--panel2);border:1px dashed var(--line);border-radius:10px;
     padding:16px;text-align:center;color:var(--tx2);font-size:13px;font-weight:600;cursor:pointer}
   .file input{display:none}
   .btn{width:100%;border:0;border-radius:12px;padding:15px;font-size:15px;font-weight:800;
     background:var(--acc);color:#fff;cursor:pointer;font-family:inherit}
   .btn.sub{background:var(--panel2);color:var(--tx);border:1px solid var(--line);font-size:13px;padding:12px;margin-top:8px}
+  .btn.small{padding:10px;font-size:13px}
   .hint{font-size:11px;color:var(--tx2);line-height:1.5;margin-top:8px}
   .val{float:right;color:var(--tx);font-weight:700}
   #saveOverlay{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:99;display:none;
@@ -56,27 +60,68 @@
   #saveOverlay p{margin:0;font-size:14px;font-weight:700;text-align:center;line-height:1.6}
   #saveOverlay small{color:var(--tx2);font-weight:500}
   #saveOverlay button{background:#fff;color:#111;border:0;border-radius:10px;padding:11px 22px;font-weight:800;font-size:14px}
+
+  /* 슬라이드 스트립 */
+  .stripWrap{margin-top:12px}
+  .strip{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 8px;-webkit-overflow-scrolling:touch}
+  .thumb{flex:0 0 auto;width:74px;border-radius:8px;overflow:hidden;border:2px solid var(--line);
+    cursor:pointer;background:#000;position:relative}
+  .thumb canvas{display:block;width:100%;height:auto}
+  .thumb.on{border-color:var(--acc)}
+  .thumb .n{position:absolute;left:4px;top:3px;font-size:10px;font-weight:800;color:#fff;
+    text-shadow:0 1px 3px rgba(0,0,0,.8)}
+  .thumbAdd{flex:0 0 auto;width:74px;border-radius:8px;border:2px dashed var(--line);background:var(--panel2);
+    color:var(--tx2);font-size:26px;font-weight:300;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    aspect-ratio:4/5}
+  .slideBtns{display:flex;gap:8px;margin-top:6px}
+  .slideBtns button{flex:1}
   @media(max-width:800px){ .previewCol{position:static} }
 </style>
 </head>
 <body>
 
 <div class="wrap">
-  <h1>카드뉴스 생성기<span>1080×1350 · 브라우저에서만 처리</span></h1>
+  <h1>카드뉴스 생성기<span>브라우저에서만 처리 · 여러 장 자동 생성</span></h1>
   <div class="layout">
 
     <div class="previewCol">
       <div class="stage">
         <canvas id="cv" width="1080" height="1350"></canvas>
       </div>
+
+      <div class="stripWrap">
+        <div class="strip" id="strip"></div>
+        <div class="slideBtns">
+          <button class="btn sub small" id="btnDup">이 슬라이드 복제</button>
+          <button class="btn sub small" id="btnLeft">◀ 이동</button>
+          <button class="btn sub small" id="btnRight">이동 ▶</button>
+          <button class="btn sub small" id="btnDel">삭제</button>
+        </div>
+      </div>
+
       <div class="card" style="margin-top:12px">
-        <button class="btn" id="btnSave">이미지 저장 / 공유</button>
+        <button class="btn" id="btnSave">현재 슬라이드 저장</button>
+        <button class="btn sub" id="btnSaveAll">전체 슬라이드 저장 (<span id="slideCount">1</span>장)</button>
         <button class="btn sub" id="btnLong">저장이 안 되면 · 길게 눌러 저장</button>
-        <div class="hint">아이폰에서는 공유 시트의 <b>"이미지 저장"</b>을 누르면 사진첩에 들어갑니다.</div>
+        <div class="hint">아이폰에서는 공유 시트의 <b>"이미지 저장"</b>을 누르면 사진첩에 들어갑니다. 데스크톱에서 전체 저장은 zip 파일로 받아집니다.</div>
       </div>
     </div>
 
     <div class="ctrlCol">
+      <div class="card">
+        <h2>빠른 생성 <small>— 여러 슬라이드를 한 번에</small></h2>
+        <textarea id="bulk" placeholder="첫 줄: 제목 1행 ([강조]는 형광펜)
+> 로 시작하면: 제목 2행
+그 다음 줄들: 소제목 (최대 2줄)
+
+---  ← 이 줄로 슬라이드를 구분합니다
+
+두 번째 슬라이드 제목
+소제목"></textarea>
+        <button class="btn small" id="btnBulk" style="margin-top:8px">텍스트로 슬라이드 생성</button>
+        <div class="hint">기존 슬라이드는 새로 만든 슬라이드로 교체됩니다. 사진·공통정보·스타일은 그대로 유지돼요.</div>
+      </div>
+
       <div class="card">
         <h2>템플릿</h2>
         <div class="grid3" id="tpl"></div>
@@ -85,42 +130,53 @@
       </div>
 
       <div class="card" id="photoCard">
-        <h2>사진</h2>
+        <h2>사진 <small>— 이 슬라이드에만 적용</small></h2>
         <label class="file" id="fileLabel">사진 선택하기<input type="file" id="file" accept="image/*"></label>
-        <label>사진 위치 (상하)<span class="val" id="vFocus">50</span></label>
-        <input type="range" id="focus" min="0" max="100" value="50">
+        <label>사진 위치 (좌우)<span class="val" id="vFocusX">50</span></label>
+        <input type="range" id="focusX" min="0" max="100" value="50">
+        <label>사진 위치 (상하)<span class="val" id="vFocusY">50</span></label>
+        <input type="range" id="focusY" min="0" max="100" value="50">
         <label>어둡게<span class="val" id="vDim">100</span></label>
         <input type="range" id="dim" min="0" max="160" value="100">
+        <button class="btn sub small" id="btnAutoAccent" style="margin-top:10px">사진에서 강조색 자동 추출</button>
       </div>
 
       <div class="card">
-        <h2>텍스트</h2>
-        <div class="row">
-          <div><label>카테고리</label><input type="text" id="category" placeholder="Coffee"></div>
-          <div><label>부제</label><input type="text" id="subtitle" placeholder="월간커피"></div>
-        </div>
-        <label>우측 태그</label><input type="text" id="tag" placeholder="Article">
+        <h2>텍스트 <small>— 이 슬라이드에만 적용</small></h2>
         <label>제목 1행 <span style="font-weight:500" id="titleHint"></span></label>
         <input type="text" id="title1" placeholder="첫 번째 줄">
         <label>제목 2행 <span style="font-weight:500">— [대괄호]로 감싸면 형광펜</span></label>
         <input type="text" id="title2" placeholder="[강조할 단어] 나머지 문장">
         <label>소제목 (최대 2줄, 직접 줄바꿈)</label>
         <textarea id="subhead" rows="2" placeholder="첫째 줄&#10;둘째 줄"></textarea>
+      </div>
+
+      <div class="card">
+        <h2>공통 정보 <small>— 모든 슬라이드에 동일 적용</small></h2>
+        <div class="row">
+          <div><label>카테고리</label><input type="text" id="category" placeholder="Coffee"></div>
+          <div><label>부제</label><input type="text" id="subtitle" placeholder="월간커피"></div>
+        </div>
+        <label>우측 태그</label><input type="text" id="tag" placeholder="Article">
         <label>작성자</label><input type="text" id="author" placeholder="홍길동">
       </div>
 
       <div class="card">
-        <h2>스타일</h2>
+        <h2>스타일 <small>— 모든 슬라이드에 동일 적용</small></h2>
         <label>글씨체 <span style="font-weight:500">— 기기에 없는 글씨체는 고딕으로 나옵니다</span></label>
         <div class="grid4" id="fontOpts"></div>
         <label style="margin-top:14px">강조 색상</label>
-        <div class="swatches" id="acc"></div>
+        <div class="swatches" id="acc">
+          <input type="color" class="swCustom" id="accCustom" value="#4f7cff" title="커스텀 색상">
+        </div>
         <label style="margin-top:14px">제목 크기<span class="val" id="vTs">76</span></label>
         <input type="range" id="ts" min="40" max="140" value="76">
         <label>소제목 크기<span class="val" id="vSs">32</span></label>
         <input type="range" id="ss" min="18" max="60" value="32">
         <label>글자 위치 (위 ↔ 아래)<span class="val" id="vTy">0</span></label>
         <input type="range" id="ty" min="-140" max="140" value="0">
+        <label style="margin-top:14px">저장 형식</label>
+        <div class="grid2" id="fmt"></div>
       </div>
     </div>
 

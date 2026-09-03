@@ -44,17 +44,44 @@ function isTextTpl(id){
 }
 var RATIOS = [{id:'feed',name:'피드 4:5',w:1080,h:1350},{id:'story',name:'스토리 9:16',w:1080,h:1920}];
 
-var S = {
-  tpl:'classic', ratio:'feed', accent:0, font:0,
-  focus:50, dim:100, ts:76, ss:32, ty:0,
-  category:'', subtitle:'', tag:'', title1:'', title2:'', subhead:'', author:''
+/* ---------- 상태 ----------
+   STYLE  : 모든 슬라이드에 공통 적용되는 스타일 (템플릿/비율/색/글씨체/크기)
+   COMMON : 모든 슬라이드에 공통 적용되는 텍스트 (카테고리/부제/태그/작성자)
+   slides : 슬라이드별 데이터 (제목/소제목/사진/사진 위치/밝기)
+   S      : 렌더링 시점에 STYLE+COMMON+해당 슬라이드를 합쳐 넣는 작업용 객체
+*/
+var STYLE = {
+  tpl:'classic', ratio:'feed', accent:0, accentCustom:null, font:0,
+  ts:76, ss:32, ty:0, format:'png'
 };
+var COMMON = { category:'', subtitle:'', tag:'', author:'' };
+var S = {};
+
+function newSlide(){
+  return {
+    id: 'sl_' + Math.random().toString(36).slice(2,9) + Date.now().toString(36),
+    title1:'', title2:'', subhead:'',
+    photo:null, focusX:50, focusY:50, dim:100
+  };
+}
+var slides = [newSlide()];
+var activeIdx = 0;
+
+function curAccent(){
+  if(S.accent === -1 && S.accentCustom) return S.accentCustom;
+  return ACCENTS[S.accent] || ACCENTS[0];
+}
+function curRatio(){
+  return RATIOS.filter(function(x){ return x.id === STYLE.ratio; })[0] || RATIOS[0];
+}
 
 /* ---------- 이미지 ---------- */
-var srcCanvas = null;      // 업로드 사진(최대 1600px로 축소)
+// 슬라이드 id → 디코딩된 캔버스. 사진은 최대 1600px로 축소해서 들고 있는다
+var photoCanvasCache = {};
 
-// file:// 로 열었을 때 blob URL은 캔버스를 오염시켜 저장이 막힘 → data URL로 읽는다
-function loadFile(f){
+// file:// 로 열었을 때 blob URL은 캔버스를 오염시켜 저장이 막힘 → data URL로 읽는다.
+// 저장용 dataURL도 같은 축소본을 재사용해서 IndexedDB 용량을 아낀다.
+function loadPhotoFile(f, slide){
   if(!f) return;
   var fr = new FileReader();
   fr.onload = function(){
@@ -67,15 +94,35 @@ function loadFile(f){
       var g = c.getContext('2d');
       g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
       g.drawImage(im, 0, 0, w, h);
-      srcCanvas = c;
-      document.getElementById('fileLabel').firstChild.nodeValue = '사진 변경하기';
-      schedule();
+      var dataUrl = c.toDataURL('image/jpeg', 0.9);
+      slide.photo = dataUrl;
+      photoCanvasCache[slide.id] = {src:dataUrl, canvas:c};
+      if(slide === slides[activeIdx]){
+        document.getElementById('fileLabel').firstChild.nodeValue = '사진 변경하기';
+      }
+      scheduleAll();
+      persistSoon();
     };
     im.onerror = function(){ alert('이미지를 불러오지 못했습니다.'); };
     im.src = fr.result;
   };
   fr.onerror = function(){ alert('사진을 읽지 못했습니다.'); };
   fr.readAsDataURL(f);
+}
+// 저장된 draft를 복원할 때, 이미 축소되어 있는 dataURL을 다시 캔버스로 디코딩만 한다
+function decodePhotoToCache(slide){
+  return new Promise(function(res){
+    if(!slide.photo){ res(); return; }
+    var im = new Image();
+    im.onload = function(){
+      var c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+      c.getContext('2d').drawImage(im, 0, 0);
+      photoCanvasCache[slide.id] = {src:slide.photo, canvas:c};
+      res();
+    };
+    im.onerror = function(){ res(); };
+    im.src = slide.photo;
+  });
 }
 
 /* ---------- 그리기 유틸 ---------- */
@@ -187,8 +234,9 @@ function drawPhoto(g, W, H){
   // cover (레터박스 없이 꽉 채움)
   var sr = src.width/src.height, dr = W/H, dw, dh;
   if(sr > dr){ dh = H; dw = H*sr; } else { dw = W; dh = W/sr; }
-  var dx = (W - dw)/2;
-  var dy = (H - dh) * (S.focus/100);
+  // 실제로 잘려나가는 축(가로 또는 세로)에만 포커스 슬라이더가 의미를 갖는다
+  var dx = (dw > W) ? (W - dw) * (S.focusX/100) : (W - dw)/2;
+  var dy = (dh > H) ? (H - dh) * (S.focusY/100) : (H - dh)/2;
   g.imageSmoothingEnabled = true; g.imageSmoothingQuality='high';
   g.drawImage(src, dx, dy, dw, dh);
 }
@@ -229,7 +277,7 @@ function topRow(g, W, k, color, align, opt){
   if(S.tag){
     g.font = font(700, 25*k);
     g.textAlign = 'right';
-    var acc = ACCENTS[S.accent];
+    var acc = curAccent();
     var tw = g.measureText(S.tag).width;
     // 알약 안에서 글자를 정확히 가운데 두려면 알약 사각형을 기준으로 좌표를 잡아야 한다
     var padX = 22*k, ph = 44*k;
@@ -265,7 +313,7 @@ function tplClassic(g, W, H, k){
   grad(g, W, H, [[0,0.46],[0.30,0.10],[0.58,0.34],[1,0.88]]);
   topRow(g, W, k, '#fff', 'left');
 
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var pad = 72*k, maxW = W - pad*2;
   var y = H - 92*k + ty(k);
 
@@ -298,7 +346,7 @@ function tplCenter(g, W, H, k){
   grad(g, W, H, [[0,0.50],[0.32,0.22],[0.62,0.42],[1,0.80]]);
   topRow(g, W, k, '#fff', 'center');
 
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var maxW = W - 130*k;
   var t1 = segs(S.title1), t2 = segs(S.title2), sub = lines(S.subhead, 2);
   var ssz = S.ss*k;
@@ -329,7 +377,7 @@ function tplCenter(g, W, H, k){
 }
 
 function tplBand(g, W, H, k){
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var bandTop = H*0.60;
   drawPhoto(g, W, H);
   grad(g, W, H, [[0,0.42],[0.35,0.06],[1,0.10]]);
@@ -368,7 +416,7 @@ function tplBand(g, W, H, k){
 function tplMinimal(g, W, H, k){
   drawPhoto(g, W, H);
   grad(g, W, H, [[0,0.62],[0.55,0.26],[1,0.62]]);
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var pad = 78*k, maxW = W - pad*2;
 
   topRow(g, W, k, '#fff', 'left');
@@ -404,7 +452,7 @@ function tplMagazine(g, W, H, k){
   grad(g, W, H, [[0,0.40],[0.28,0.08],[0.55,0.36],[1,0.92]]);
   topRow(g, W, k, '#fff', 'left');
 
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var barX = 72*k, pad = barX + 34*k, maxW = W - pad - 72*k;
   var y = H - 92*k + ty(k);
 
@@ -438,7 +486,7 @@ function tplQuote(g, W, H, k){
   grad(g, W, H, [[0,0.66],[0.5,0.58],[1,0.78]]);
   topRow(g, W, k, '#fff', 'center');
 
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var maxW = W - 150*k;
   var t1 = segs(S.title1), t2 = segs(S.title2), sub = lines(S.subhead, 2);
   var ssz = S.ss*k;
@@ -450,7 +498,7 @@ function tplQuote(g, W, H, k){
   g.textAlign='center';
   g.font = font(800, 150*k);
   g.fillStyle = acc.c;
-  g.fillText('\u201C', W/2, top - 40*k);
+  g.fillText('“', W/2, top - 40*k);
   g.textAlign = 'left';
 
   var y = top + (s1||s2)*0.86;
@@ -474,7 +522,7 @@ function tplQuote(g, W, H, k){
 // 단색 배경 + 큰 제목
 function tplSolid(g, W, H, k){
   TEXT_SHADOW = false;
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var bg = acc.c, fg = acc.on;
   var dim = isLight(bg) ? 'rgba(20,22,28,0.60)' : 'rgba(255,255,255,0.72)';
   g.fillStyle = bg; g.fillRect(0,0,W,H);
@@ -507,7 +555,7 @@ function tplSolid(g, W, H, k){
 // 그라디에이션 배경
 function tplGradient(g, W, H, k){
   TEXT_SHADOW = false;
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var deep = isLight(acc.c) ? mix(acc.c, '#1a1c22', 0.86) : mix(acc.c, '#07080b', 0.78);
   var lg = g.createLinearGradient(0, 0, W*0.35, H);
   lg.addColorStop(0, mix(acc.c, '#ffffff', isLight(acc.c) ? 0.05 : 0.18));
@@ -547,7 +595,7 @@ function tplGradient(g, W, H, k){
 // 숫자/통계 강조 — 제목 1행에 숫자, 2행에 설명
 function tplStat(g, W, H, k){
   TEXT_SHADOW = false;
-  var acc = ACCENTS[S.accent];
+  var acc = curAccent();
   var bg = '#0d0f14';
   g.fillStyle = bg; g.fillRect(0,0,W,H);
   // 은은한 방사형 포인트
@@ -593,33 +641,166 @@ function tplStat(g, W, H, k){
 var DRAW = {classic:tplClassic, center:tplCenter, band:tplBand, minimal:tplMinimal, magazine:tplMagazine, quote:tplQuote,
             solid:tplSolid, gradient:tplGradient, stat:tplStat};
 
-/* ---------- 렌더 ---------- */
+/* ---------- 렌더 ----------
+   메인 캔버스뿐 아니라 슬라이드 스트립 썸네일, 일괄 저장용 오프스크린 캔버스도
+   전부 이 renderInto() 하나로 그린다. */
+var srcCanvas = null; // 현재 그리는 슬라이드의 디코딩된 사진 캔버스
+function applySlideToS(slide){
+  S.tpl = STYLE.tpl; S.ratio = STYLE.ratio; S.accent = STYLE.accent; S.accentCustom = STYLE.accentCustom;
+  S.font = STYLE.font; S.ts = STYLE.ts; S.ss = STYLE.ss; S.ty = STYLE.ty;
+  S.category = COMMON.category; S.subtitle = COMMON.subtitle; S.tag = COMMON.tag; S.author = COMMON.author;
+  S.title1 = slide.title1; S.title2 = slide.title2; S.subhead = slide.subhead;
+  S.dim = slide.dim; S.focusX = slide.focusX; S.focusY = slide.focusY;
+  srcCanvas = (photoCanvasCache[slide.id] && photoCanvasCache[slide.id].canvas) || null;
+}
+function renderInto(g, cvEl, slide, W, H){
+  if(cvEl.width !== W || cvEl.height !== H){ cvEl.width = W; cvEl.height = H; }
+  var k = W/1080;
+  g.setTransform(1,0,0,1,0,0);
+  g.clearRect(0,0,W,H);
+  g.textBaseline = 'alphabetic';
+  g.textAlign = 'left';
+  g.globalAlpha = 1;
+  TEXT_SHADOW = true; // 사진 템플릿 기본값. 텍스트 템플릿이 각자 끈다
+  applySlideToS(slide);
+  (DRAW[S.tpl] || tplClassic)(g, W, H, k);
+}
+
 var rafId = 0;
 function schedule(){
   if(rafId) return;
   rafId = requestAnimationFrame(function(){ rafId = 0; render(); });
 }
 function render(){
-  var r = RATIOS.filter(function(x){return x.id===S.ratio;})[0];
-  if(cv.width !== r.w || cv.height !== r.h){ cv.width = r.w; cv.height = r.h; }
-  var W = cv.width, H = cv.height, k = W/1080;
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,W,H);
-  ctx.textBaseline = 'alphabetic';
-  ctx.textAlign = 'left';
-  ctx.globalAlpha = 1;
-  TEXT_SHADOW = true;   // 사진 템플릿 기본값. 텍스트 템플릿이 각자 끈다
-  (DRAW[S.tpl] || tplClassic)(ctx, W, H, k);
+  var r = curRatio();
+  renderInto(ctx, cv, slides[activeIdx], r.w, r.h);
+  refreshActiveThumb();
 }
 
-/* ---------- 저장 ---------- */
-function fileName(){
-  var t = (S.title1 + ' ' + S.title2).replace(/[\[\]]/g,'').replace(/[\\/:*?"<>|]/g,'').trim();
-  return (t ? t.slice(0,30) : 'cardnews') + '.png';
+/* ---------- 슬라이드 스트립 (썸네일) ---------- */
+var THUMB_W = 220;
+function renderThumb(slide){
+  if(!slide._thumbCanvas) return;
+  var r = curRatio();
+  var w = THUMB_W, h = Math.round(THUMB_W * r.h / r.w);
+  var g = slide._thumbCanvas.getContext('2d');
+  renderInto(g, slide._thumbCanvas, slide, w, h);
 }
+function refreshActiveThumb(){
+  renderThumb(slides[activeIdx]);
+}
+var thumbTimer = 0;
+function scheduleAllThumbs(){
+  clearTimeout(thumbTimer);
+  thumbTimer = setTimeout(function(){ slides.forEach(renderThumb); }, 300);
+}
+function scheduleAll(){ schedule(); scheduleAllThumbs(); }
+
+function buildStrip(){
+  var host = document.getElementById('strip');
+  host.innerHTML = '';
+  slides.forEach(function(slide, i){
+    var d = document.createElement('div');
+    d.className = 'thumb' + (i === activeIdx ? ' on' : '');
+    var cvv = document.createElement('canvas');
+    d.appendChild(cvv);
+    var n = document.createElement('div'); n.className = 'n'; n.textContent = i + 1;
+    d.appendChild(n);
+    d.addEventListener('click', function(){ setActive(i); });
+    host.appendChild(d);
+    slide._thumbCanvas = cvv;
+    renderThumb(slide);
+  });
+  var add = document.createElement('div');
+  add.className = 'thumbAdd'; add.textContent = '+'; add.title = '슬라이드 추가';
+  add.addEventListener('click', addSlide);
+  host.appendChild(add);
+  document.getElementById('slideCount').textContent = slides.length;
+}
+
+/* ---------- 슬라이드 관리 ---------- */
+function setActive(i){
+  activeIdx = Math.max(0, Math.min(slides.length - 1, i));
+  syncActiveFieldsToUI();
+  buildStrip();
+  schedule();
+}
+function addSlide(){
+  slides.push(newSlide());
+  activeIdx = slides.length - 1;
+  syncActiveFieldsToUI();
+  buildStrip();
+  schedule();
+  persistSoon();
+}
+function duplicateActive(){
+  var s = slides[activeIdx];
+  var copy = {
+    id: 'sl_' + Math.random().toString(36).slice(2,9) + Date.now().toString(36),
+    title1:s.title1, title2:s.title2, subhead:s.subhead,
+    photo:s.photo, focusX:s.focusX, focusY:s.focusY, dim:s.dim
+  };
+  if(s.photo && photoCanvasCache[s.id]) photoCanvasCache[copy.id] = photoCanvasCache[s.id];
+  slides.splice(activeIdx + 1, 0, copy);
+  activeIdx += 1;
+  syncActiveFieldsToUI();
+  buildStrip();
+  schedule();
+  persistSoon();
+}
+function deleteActive(){
+  if(slides.length <= 1){ alert('마지막 슬라이드는 삭제할 수 없습니다.'); return; }
+  slides.splice(activeIdx, 1);
+  activeIdx = Math.min(activeIdx, slides.length - 1);
+  syncActiveFieldsToUI();
+  buildStrip();
+  schedule();
+  persistSoon();
+}
+function moveActive(dir){
+  var j = activeIdx + dir;
+  if(j < 0 || j >= slides.length) return;
+  var tmp = slides[activeIdx]; slides[activeIdx] = slides[j]; slides[j] = tmp;
+  activeIdx = j;
+  buildStrip();
+  schedule();
+  persistSoon();
+}
+
+/* ---------- 빠른 생성: 텍스트 붙여넣기 → 여러 슬라이드 ---------- */
+// 형식: 슬라이드는 --- 로 구분. 블록의 첫 줄은 제목1행, ">"로 시작하는 줄은 제목2행,
+// 그 다음 최대 두 줄은 소제목으로 들어간다.
+function parseBulk(text){
+  var blocks = String(text).split(/\n[ \t]*-{3,}[ \t]*\n/);
+  var out = [];
+  blocks.forEach(function(block){
+    var ls = block.split('\n').map(function(x){ return x.replace(/\r$/, ''); })
+                  .filter(function(x){ return x.trim() !== ''; });
+    if(!ls.length) return;
+    var sl = newSlide();
+    sl.title1 = ls[0].trim();
+    var idx = 1;
+    if(ls[idx] && /^>\s*/.test(ls[idx])){
+      sl.title2 = ls[idx].replace(/^>\s*/, '').trim();
+      idx++;
+    }
+    sl.subhead = ls.slice(idx, idx + 2).join('\n');
+    out.push(sl);
+  });
+  return out;
+}
+
+/* ---------- 저장 (현재 슬라이드 1장) ---------- */
+function fileBaseName(slide){
+  var t = (slide.title1 + ' ' + slide.title2).replace(/[\[\]]/g,'').replace(/[\\/:*?"<>|]/g,'').trim();
+  return t ? t.slice(0,30) : 'cardnews';
+}
+function curExt(){ return STYLE.format === 'jpeg' ? 'jpg' : 'png'; }
+function curMime(){ return STYLE.format === 'jpeg' ? 'image/jpeg' : 'image/png'; }
+function fileName(){ return fileBaseName(slides[activeIdx]) + '.' + curExt(); }
 function toBlob(){
   return new Promise(function(res){
-    if(cv.toBlob) cv.toBlob(function(b){ res(b); }, 'image/png');
+    if(cv.toBlob) cv.toBlob(function(b){ res(b); }, curMime(), 0.92);
     else res(null);
   });
 }
@@ -628,9 +809,13 @@ function isIOS(){
          /iPhone|iPad|iPod/.test(navigator.userAgent) ||
          (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1); // iPadOS
 }
+function isMobileTouch(){
+  return (navigator.maxTouchPoints > 1) &&
+         (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+}
 function showLongPress(){
   try{
-    document.getElementById('ovImg').src = cv.toDataURL('image/png');
+    document.getElementById('ovImg').src = cv.toDataURL(curMime(), 0.92);
     document.getElementById('saveOverlay').style.display = 'flex';
   }catch(e){ alert('이미지 생성에 실패했습니다.'); }
 }
@@ -639,11 +824,9 @@ async function save(){
   var blob = await toBlob();
 
   // 1) Web Share API — 모바일에서만. (데스크톱 크롬/윈도우는 OS 공유창이 떠서 오히려 불편)
-  var isMobile = (navigator.maxTouchPoints > 1) &&
-                 (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  if(isMobile && blob && navigator.canShare && window.File){
+  if(isMobileTouch() && blob && navigator.canShare && window.File){
     try{
-      var f = new File([blob], name, {type:'image/png'});
+      var f = new File([blob], name, {type: curMime()});
       if(navigator.canShare({files:[f]})){
         await navigator.share({files:[f]});
         return;
@@ -669,116 +852,368 @@ async function save(){
   showLongPress();
 }
 
-/* ---------- localStorage ---------- */
-var KEEP = ['category','subtitle','tag','author','tpl','accent','font'];
-var LS = 'cardnews.v1';
-function saveKeep(){
-  try{
-    var o = {};
-    KEEP.forEach(function(k){ o[k] = S[k]; });
-    localStorage.setItem(LS, JSON.stringify(o));
-  }catch(e){}
+/* ---------- 저장 (전체 슬라이드 일괄) ---------- */
+/* 압축 없는(STORE) 최소 ZIP writer. PNG/JPEG는 이미 압축되어 있어 재압축 이득이 없고,
+   외부 라이브러리를 쓰지 않기 위해 CRC32+ZIP 헤더를 직접 만든다. */
+var CRC_TABLE = (function(){
+  var t = [];
+  for(var n=0;n<256;n++){
+    var c = n;
+    for(var k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes){
+  var c = 0xFFFFFFFF;
+  for(var i=0;i<bytes.length;i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
 }
-function loadKeep(){
-  try{
-    var o = JSON.parse(localStorage.getItem(LS) || '{}');
-    KEEP.forEach(function(k){ if(o[k] !== undefined && o[k] !== null) S[k] = o[k]; });
-  }catch(e){}
+function dosDateTime(){
+  var d = new Date();
+  var dosTime = ((d.getHours()&31)<<11) | ((d.getMinutes()&63)<<5) | (Math.floor(d.getSeconds()/2)&31);
+  var dosDate = (((d.getFullYear()-1980)&127)<<9) | (((d.getMonth()+1)&15)<<5) | (d.getDate()&31);
+  return {time:dosTime, date:dosDate};
+}
+function u16(v){ return [v & 0xFF, (v >> 8) & 0xFF]; }
+function u32(v){ return [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]; }
+// 한글 파일명이 CP437로 깨지지 않도록 UTF-8로 인코딩하고, 각 헤더의 general purpose
+// flag에 UTF-8 플래그(bit 11 = 0x0800)를 켜서 압축 해제 프로그램에 알려준다
+function strBytes(s){ return Array.prototype.slice.call(new TextEncoder().encode(s)); }
+var UTF8_FLAG = 0x0800;
+function makeZip(files){ // files: [{name, data:Uint8Array}]
+  var chunks = [], centralChunks = [], offset = 0;
+  var dt = dosDateTime();
+  files.forEach(function(f){
+    var nameBytes = strBytes(f.name);
+    var data = f.data;
+    var crc = crc32(data);
+    var local = new Uint8Array([].concat(
+      u32(0x04034b50), u16(20), u16(UTF8_FLAG), u16(0), u16(dt.time), u16(dt.date),
+      u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), nameBytes
+    ));
+    chunks.push(local, data);
+    var central = new Uint8Array([].concat(
+      u32(0x02014b50), u16(20), u16(20), u16(UTF8_FLAG), u16(0), u16(dt.time), u16(dt.date),
+      u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0),
+      u32(offset), nameBytes
+    ));
+    centralChunks.push(central);
+    offset += local.length + data.length;
+  });
+  var centralStart = offset, centralSize = 0;
+  centralChunks.forEach(function(c){ centralSize += c.length; });
+  var end = new Uint8Array([].concat(
+    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+    u32(centralSize), u32(centralStart), u16(0)
+  ));
+  return new Blob(chunks.concat(centralChunks, [end]), {type:'application/zip'});
+}
+function slidePngBytes(slide, W, H){
+  return new Promise(function(res){
+    var c = document.createElement('canvas');
+    var g = c.getContext('2d');
+    renderInto(g, c, slide, W, H);
+    c.toBlob(function(b){
+      if(!b){ res(null); return; }
+      b.arrayBuffer().then(function(buf){ res(new Uint8Array(buf)); });
+    }, curMime(), 0.92);
+  });
+}
+async function collectAllFiles(){
+  var r = curRatio(), ext = curExt();
+  var out = [];
+  for(var i=0;i<slides.length;i++){
+    var bytes = await slidePngBytes(slides[i], r.w, r.h);
+    if(bytes) out.push({name: String(i+1).padStart(2,'0') + '_' + fileBaseName(slides[i]) + '.' + ext, data:bytes});
+  }
+  return out;
+}
+async function saveAll(){
+  if(slides.length === 1) return save();
+  var files = await collectAllFiles();
+  if(!files.length){ alert('저장할 슬라이드가 없습니다.'); return; }
+
+  if(isMobileTouch() && navigator.canShare && window.File){
+    try{
+      var fileObjs = files.map(function(f){ return new File([f.data], f.name, {type: curMime()}); });
+      if(navigator.canShare({files: fileObjs})){
+        await navigator.share({files: fileObjs});
+        return;
+      }
+    }catch(e){
+      if(e && e.name === 'AbortError') return;
+    }
+  }
+  if(!isIOS()){
+    try{
+      var blob = makeZip(files);
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = 'cardnews.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      return;
+    }catch(e){}
+  }
+  alert('이 브라우저에서는 한 번에 전체 저장이 어려워요. 슬라이드를 하나씩 선택한 뒤 "현재 슬라이드 저장"을 눌러주세요.');
+}
+
+/* ---------- IndexedDB 임시저장 ---------- */
+// localStorage는 사진 dataURL을 담기엔 용량(5~10MB)이 부족해 IndexedDB를 쓴다.
+var DB_NAME = 'cardnews-db', DB_VER = 1, STORE_NAME = 'draft', DRAFT_KEY = 'current';
+function idbOpen(){
+  return new Promise(function(res, rej){
+    if(!('indexedDB' in window)){ rej(new Error('no indexedDB')); return; }
+    var req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = function(){ req.result.createObjectStore(STORE_NAME); };
+    req.onsuccess = function(){ res(req.result); };
+    req.onerror = function(){ rej(req.error); };
+  });
+}
+function idbSet(key, val){
+  return idbOpen().then(function(db){
+    return new Promise(function(res, rej){
+      var tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put(val, key);
+      tx.oncomplete = function(){ res(); };
+      tx.onerror = function(){ rej(tx.error); };
+    });
+  });
+}
+function idbGet(key){
+  return idbOpen().then(function(db){
+    return new Promise(function(res, rej){
+      var tx = db.transaction(STORE_NAME, 'readonly');
+      var rq = tx.objectStore(STORE_NAME).get(key);
+      rq.onsuccess = function(){ res(rq.result); };
+      rq.onerror = function(){ rej(rq.error); };
+    });
+  });
+}
+var persistTimer = 0;
+function persistSoon(){
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(persistNow, 500);
+}
+function persistNow(){
+  var snapshot = {
+    common: COMMON,
+    style: {tpl:STYLE.tpl, ratio:STYLE.ratio, accent:STYLE.accent, accentCustom:STYLE.accentCustom,
+      font:STYLE.font, ts:STYLE.ts, ss:STYLE.ss, ty:STYLE.ty, format:STYLE.format},
+    activeIdx: activeIdx,
+    slides: slides.map(function(s){
+      return {id:s.id, title1:s.title1, title2:s.title2, subhead:s.subhead, photo:s.photo,
+        focusX:s.focusX, focusY:s.focusY, dim:s.dim};
+    })
+  };
+  idbSet(DRAFT_KEY, snapshot).catch(function(){});
+}
+function restoreDraft(){
+  return idbGet(DRAFT_KEY).then(function(saved){
+    if(!saved) return;
+    if(saved.common) Object.assign(COMMON, saved.common);
+    if(saved.style) Object.assign(STYLE, saved.style);
+    if(saved.slides && saved.slides.length){
+      slides = saved.slides.map(function(s){ return Object.assign(newSlide(), s); });
+      activeIdx = Math.max(0, Math.min(slides.length - 1, saved.activeIdx || 0));
+    }
+    return Promise.all(slides.map(decodePhotoToCache));
+  });
 }
 
 /* ---------- UI 바인딩 ---------- */
-function bindText(id, key, keep){
-  var el = document.getElementById(id);
-  el.value = S[key];
-  el.addEventListener('input', function(){
-    S[key] = el.value;
-    if(keep) saveKeep();
-    schedule();
-  });
-}
-function bindRange(id, key, valId){
-  var el = document.getElementById(id), out = document.getElementById(valId);
-  el.value = S[key]; out.textContent = S[key];
-  el.addEventListener('input', function(){
-    S[key] = +el.value; out.textContent = el.value; schedule();
-  });
+function setRangeUI(id, valId, val){
+  document.getElementById(id).value = val;
+  document.getElementById(valId).textContent = val;
 }
 function syncPhotoCard(){
-  var textOnly = isTextTpl(S.tpl);
+  var textOnly = isTextTpl(STYLE.tpl);
   document.getElementById('photoCard').style.display = textOnly ? 'none' : '';
-  document.getElementById('titleHint').textContent = (S.tpl === 'stat')
+  document.getElementById('titleHint').textContent = (STYLE.tpl === 'stat')
     ? '숫자가 들어갑니다 (예: 92%)'
     : '';
 }
-function buildOpts(hostId, items, key, onPick){
+function syncActiveFieldsToUI(){
+  var s = slides[activeIdx];
+  document.getElementById('title1').value = s.title1;
+  document.getElementById('title2').value = s.title2;
+  document.getElementById('subhead').value = s.subhead;
+  setRangeUI('focusX', 'vFocusX', s.focusX);
+  setRangeUI('focusY', 'vFocusY', s.focusY);
+  setRangeUI('dim', 'vDim', s.dim);
+  document.getElementById('fileLabel').firstChild.nodeValue = s.photo ? '사진 변경하기' : '사진 선택하기';
+  syncPhotoCard();
+}
+function bindCommonText(id, key){
+  var el = document.getElementById(id);
+  el.value = COMMON[key];
+  el.addEventListener('input', function(){
+    COMMON[key] = el.value;
+    scheduleAll();
+    persistSoon();
+  });
+}
+function bindSlideText(id, key){
+  var el = document.getElementById(id);
+  el.addEventListener('input', function(){
+    slides[activeIdx][key] = el.value;
+    schedule();
+    persistSoon();
+  });
+}
+function bindSlideRange(id, key, valId){
+  var el = document.getElementById(id), out = document.getElementById(valId);
+  el.addEventListener('input', function(){
+    slides[activeIdx][key] = +el.value; out.textContent = el.value;
+    schedule();
+    persistSoon();
+  });
+}
+function bindStyleRange(id, key, valId){
+  var el = document.getElementById(id), out = document.getElementById(valId);
+  el.value = STYLE[key]; out.textContent = STYLE[key];
+  el.addEventListener('input', function(){
+    STYLE[key] = +el.value; out.textContent = el.value;
+    scheduleAll();
+    persistSoon();
+  });
+}
+function buildOpts(hostId, items, styleKey, onPick){
   var host = document.getElementById(hostId);
   host.innerHTML = '';
   items.forEach(function(it){
     var b = document.createElement('button');
-    b.type = 'button'; b.className = 'opt' + (S[key] === it.id ? ' on' : '');
+    b.type = 'button'; b.className = 'opt' + (STYLE[styleKey] === it.id ? ' on' : '');
     b.textContent = it.name;
     b.addEventListener('click', function(){
-      S[key] = it.id;
+      STYLE[styleKey] = it.id;
       Array.prototype.forEach.call(host.children, function(c){ c.classList.remove('on'); });
       b.classList.add('on');
       if(onPick) onPick();
-      schedule();
+      scheduleAll();
+      persistSoon();
     });
     host.appendChild(b);
   });
 }
-
-loadKeep();
-
-buildOpts('tpl', TEMPLATES, 'tpl', function(){ saveKeep(); syncPhotoCard(); });
-buildOpts('ratio', RATIOS.map(function(r){return {id:r.id, name:r.name};}), 'ratio');
-buildOpts('fontOpts', FONTS.map(function(f, i){ return {id:i, name:f.name}; }), 'font', saveKeep);
-// 버튼 글씨도 실제 글꼴로 보여줘야 고르기 쉽다
-Array.prototype.forEach.call(document.getElementById('fontOpts').children, function(b, i){
-  b.style.fontFamily = FONTS[i].f;
-});
-
-var accHost = document.getElementById('acc');
-ACCENTS.forEach(function(a, i){
-  var b = document.createElement('button');
-  b.type='button'; b.className = 'sw' + (S.accent === i ? ' on' : '');
-  b.style.background = a.c; b.title = a.name;
-  b.addEventListener('click', function(){
-    S.accent = i;
-    Array.prototype.forEach.call(accHost.children, function(c){ c.classList.remove('on'); });
-    b.classList.add('on');
-    saveKeep(); schedule();
+var accHost, accCustomInput, accSwatchEls = [];
+function refreshAccentUI(){
+  accSwatchEls.forEach(function(c){ c.classList.remove('on'); });
+  if(STYLE.accent >= 0 && accSwatchEls[STYLE.accent]) accSwatchEls[STYLE.accent].classList.add('on');
+}
+function buildAccentSwatches(){
+  accHost = document.getElementById('acc');
+  accCustomInput = document.getElementById('accCustom');
+  accSwatchEls = [];
+  ACCENTS.forEach(function(a, i){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'sw';
+    b.style.background = a.c; b.title = a.name;
+    b.setAttribute('aria-label', '강조색: ' + a.name);
+    b.addEventListener('click', function(){
+      STYLE.accent = i; STYLE.accentCustom = null;
+      refreshAccentUI();
+      scheduleAll(); persistSoon();
+    });
+    accHost.insertBefore(b, accCustomInput);
+    accSwatchEls[i] = b;
   });
-  accHost.appendChild(b);
-});
+  if(STYLE.accentCustom) accCustomInput.value = STYLE.accentCustom.c;
+  accCustomInput.addEventListener('input', function(){
+    var c = accCustomInput.value;
+    STYLE.accentCustom = {name:'커스텀', c:c, on:(isLight(c) ? '#141414' : '#ffffff')};
+    STYLE.accent = -1;
+    refreshAccentUI();
+    scheduleAll(); persistSoon();
+  });
+  refreshAccentUI();
+}
 
-bindText('category','category',true);
-bindText('subtitle','subtitle',true);
-bindText('tag','tag',true);
-bindText('author','author',true);
-bindText('title1','title1');
-bindText('title2','title2');
-bindText('subhead','subhead');
+function initUI(){
+  buildOpts('tpl', TEMPLATES, 'tpl', function(){ syncPhotoCard(); });
+  buildOpts('ratio', RATIOS.map(function(r){ return {id:r.id, name:r.name}; }), 'ratio');
+  buildOpts('fontOpts', FONTS.map(function(f, i){ return {id:i, name:f.name}; }), 'font');
+  // 버튼 글씨도 실제 글꼴로 보여줘야 고르기 쉽다
+  Array.prototype.forEach.call(document.getElementById('fontOpts').children, function(b, i){
+    b.style.fontFamily = FONTS[i].f;
+  });
+  buildAccentSwatches();
+  buildOpts('fmt', [{id:'png', name:'PNG'}, {id:'jpeg', name:'JPEG'}], 'format');
 
-bindRange('focus','focus','vFocus');
-bindRange('dim','dim','vDim');
-bindRange('ts','ts','vTs');
-bindRange('ss','ss','vSs');
-bindRange('ty','ty','vTy');
+  bindCommonText('category', 'category');
+  bindCommonText('subtitle', 'subtitle');
+  bindCommonText('tag', 'tag');
+  bindCommonText('author', 'author');
 
-document.getElementById('file').addEventListener('change', function(e){
-  loadFile(e.target.files && e.target.files[0]);
-});
-document.getElementById('btnSave').addEventListener('click', save);
-document.getElementById('btnLong').addEventListener('click', showLongPress);
-document.getElementById('ovClose').addEventListener('click', function(){
-  document.getElementById('saveOverlay').style.display = 'none';
-  document.getElementById('ovImg').src = '';
-});
+  bindSlideText('title1', 'title1');
+  bindSlideText('title2', 'title2');
+  bindSlideText('subhead', 'subhead');
+  bindSlideRange('focusX', 'focusX', 'vFocusX');
+  bindSlideRange('focusY', 'focusY', 'vFocusY');
+  bindSlideRange('dim', 'dim', 'vDim');
 
-/* ---------- 초기 실행 ---------- */
-// 원본에는 블로그방 공유용 비밀번호 게이트가 있었지만,
-// 이 디벨롭 버전은 그 잠금을 제거하고 바로 사용 가능하게 열어둔다.
-syncPhotoCard();
-render();
+  bindStyleRange('ts', 'ts', 'vTs');
+  bindStyleRange('ss', 'ss', 'vSs');
+  bindStyleRange('ty', 'ty', 'vTy');
+
+  document.getElementById('file').addEventListener('change', function(e){
+    var f = e.target.files && e.target.files[0];
+    if(f) loadPhotoFile(f, slides[activeIdx]);
+  });
+  document.getElementById('btnSave').addEventListener('click', save);
+  document.getElementById('btnSaveAll').addEventListener('click', saveAll);
+  document.getElementById('btnLong').addEventListener('click', showLongPress);
+  document.getElementById('ovClose').addEventListener('click', function(){
+    document.getElementById('saveOverlay').style.display = 'none';
+    document.getElementById('ovImg').src = '';
+  });
+  document.getElementById('btnDup').addEventListener('click', duplicateActive);
+  document.getElementById('btnLeft').addEventListener('click', function(){ moveActive(-1); });
+  document.getElementById('btnRight').addEventListener('click', function(){ moveActive(1); });
+  document.getElementById('btnDel').addEventListener('click', deleteActive);
+  document.getElementById('btnBulk').addEventListener('click', function(){
+    var text = document.getElementById('bulk').value;
+    var parsed = parseBulk(text);
+    if(!parsed.length){ alert('생성할 텍스트를 입력해주세요.'); return; }
+    var hasContent = slides.some(function(s){ return s.title1 || s.title2 || s.subhead || s.photo; });
+    if(hasContent && !confirm(parsed.length + '장의 슬라이드로 기존 슬라이드를 교체할까요?')) return;
+    slides = parsed;
+    activeIdx = 0;
+    syncActiveFieldsToUI();
+    buildStrip();
+    schedule();
+    persistSoon();
+  });
+  document.getElementById('btnAutoAccent').addEventListener('click', function(){
+    var slide = slides[activeIdx];
+    var cache = photoCanvasCache[slide.id];
+    if(!cache){ alert('먼저 사진을 선택해주세요.'); return; }
+    try{
+      var tmp = document.createElement('canvas'); tmp.width = 32; tmp.height = 32;
+      var tg = tmp.getContext('2d');
+      tg.drawImage(cache.canvas, 0, 0, 32, 32);
+      var data = tg.getImageData(0, 0, 32, 32).data;
+      var r=0,g=0,b=0,n=0;
+      for(var i=0;i<data.length;i+=4){ r+=data[i]; g+=data[i+1]; b+=data[i+2]; n++; }
+      r = Math.round(r/n); g = Math.round(g/n); b = Math.round(b/n);
+      var hex = '#' + [r,g,b].map(function(v){ return v.toString(16).padStart(2,'0'); }).join('');
+      STYLE.accentCustom = {name:'사진색', c:hex, on:(isLight(hex) ? '#141414' : '#ffffff')};
+      STYLE.accent = -1;
+      accCustomInput.value = hex;
+      refreshAccentUI();
+      scheduleAll(); persistSoon();
+    }catch(e){ alert('색상을 추출하지 못했습니다. (외부 이미지 URL 등 보안 제한일 수 있어요)'); }
+  });
+
+  syncActiveFieldsToUI();
+  buildStrip();
+  syncPhotoCard();
+  render();
+}
+
+/* ---------- 초기 실행 ----------
+   원본에는 블로그방 공유용 비밀번호 게이트가 있었지만,
+   이 디벨롭 버전은 그 잠금을 제거하고 바로 사용 가능하게 열어둔다. */
+restoreDraft().catch(function(){}).then(initUI);
 })();
